@@ -54,7 +54,7 @@ A_target = 14.51
 
 #: parameters for EarthGeometry
 r_E = 6391.e3  # Earth radius in m
-h_obs = 0.  # observation level in m
+h_obs = 883.9  # observation level in m
 h_atm = 112.8e3  # top of the atmosphere in m
 
 #: Default parameters for GeneralizedTarget
@@ -264,6 +264,7 @@ else:
 try:
     import cupy
     has_cuda = True
+    print('Yeah Cupy')
 except ImportError:
     has_cuda = False
 

@@ -1,0 +1,17 @@
+# Allow our users
+User-agent: Wget
+User-agent: curl
+Disallow:
+
+User-agent: Baiduspider
+Disallow: /
+
+# Disallow bots
+User-agent: Googlebot
+User-agent: Yandex
+User-agent: SemrushBot
+User-agent: MauiBot
+User-agent: bingbot
+User-agent: ltx71 - (http://ltx71.com/)
+User-agent: dotbot
+Disallow: /

@@ -1,0 +1,16 @@
+--2020-06-25 12:12:11--  https://urs.earthdata.nasa.gov/oauth/authorize?response_type=code
+Resolving urs.earthdata.nasa.gov... 198.118.243.33, 2001:4d0:241a:4081::89
+Connecting to urs.earthdata.nasa.gov|198.118.243.33|:443... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: https://urs.earthdata.nasa.gov/home [following]
+--2020-06-25 12:12:12--  https://urs.earthdata.nasa.gov/home
+Reusing existing connection to urs.earthdata.nasa.gov:443.
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [text/html]
+Saving to: 'authorize?response_type=code.tmp'
+
+authorize?response_type=code.tmp                        [<=>                                                                                                                ]       0  --.-KB/s               authorize?response_type=code.tmp                        [ <=>                                                                                                               ]  11.73K  --.-KB/s    in 0.02s   
+
+2020-06-25 12:12:12 (517 KB/s) - 'authorize?response_type=code.tmp' saved [12009]
+
+Removing authorize?response_type=code.tmp.

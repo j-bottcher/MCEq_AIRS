@@ -3,6 +3,9 @@ from abc import ABCMeta, abstractmethod
 from six import with_metaclass
 from os.path import join
 import numpy as np
+from datetime import datetime
+import os
+import glob
 from MCEq.misc import theta_rad
 from MCEq.misc import info
 
@@ -76,13 +79,14 @@ class EarthsAtmosphere(with_metaclass(ABCMeta)):
         vec_rho_l = np.vectorize(
             lambda delta_l: self.get_density(self.geom.h(delta_l, thrad)))
         dl_vec = np.linspace(0, path_length, n_steps)
-
+        
         now = time()
-
+        rho_l = vec_rho_l(dl_vec)
+        
         # Calculate integral for each depth point
-        X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)  #
-        dl_vec = dl_vec[1:]
-
+        X_int = cumtrapz(rho_l[np.isfinite(rho_l)], dl_vec[np.isfinite(rho_l)])  #
+        dl_vec = dl_vec[np.isfinite(rho_l)][1:]
+        
         info(5, '.. took {0:1.2f}s'.format(time() - now))
 
         # Save depth value at h_obs
@@ -682,7 +686,417 @@ class MSIS00Atmosphere(EarthsAtmosphere):
         """
         return self._msis.get_temperature(h_cm)
 
+class AIRSAtmosphereLatLong(EarthsAtmosphere):
+    """Class for downloading AIRS data from website and using as for atmosphere data.
+    This class can only be used with a working internet connection or already downloaded AIRS data.
+    For this to work a .netcdf file has to be created containing the Username password combination for eosdis.nasa.gov.
+    The files are downloaded with wget in AIRS_Download and further processed by the read_in function of AIRS_T_eff_functions(credit to Phillip Fuerst and Simon Hauser).
+    Additionally netcdf4+HDF4 are required to read the downloaded AIRS files. 
+    (https://unidata.github.io/netcdf4-python/netCDF4/index.html,https://www.unidata.ucar.edu/software/netcdf/, https://portal.hdfgroup.org/display/HDF4/HDF4) 
+    HDF4 has to be installed with the --prefix=H4DIR --enable-shared --disable-fortran --disable-netcdf options. 
+    HDF5 has to be installed with the --prefix=H5DIR --enable-zlib --with-zlib= --with-szlib= options. 
+    Next the NETCDF4 C package has to be installed:
+    Env variables:
+        H5DIR=
+        H4DIR=
+        LIBS="-ldl"
+        CPPFLAGS="-I${H5DIR}/include -I${H4DIR}/include"
+        LDFLAGS="-L${H5DIR}/lib -L${H4DIR}/lib"
+    Configure Flags:
+        --prefix=  --enable-hdf4 --disble-dap
+    Before installing python netcdf, enviroment variables have to be set:  
+        NETCDF4_DIR=
+        USE_SETUPCFG=0
+        HDF5_INCDIR=
+        HDF5_LIBDIR=
+        Same for HDF4 and NETCDF4!
+        Then python setup.py install --user
+    Args:
+        date (str): Date to probe for analysis (YearMonthDay)
+        location ((int,int)): (lat,long) of location. Latitude in degrees (0 to 180) 0=North Pole, 180=South Pole
+        airs_dir (str): directory to save downloaded AIRS data or which contains already downloaded AIRS data
+        keep_airs (bool): Wether to keep downloaded airs data
+        asc_desc (str) : Either "asc","desc" or "mean". Defines if ascending or descending or the average value of the Dataset is used for temperature and height.
+    """
+    def __init__(self, date, location,airs_dir = '', keep_airs = False,asc_desc='mean' ,*args,**kwargs):
+        
 
+        self.airs_dir      = airs_dir
+        self.keep_airs     = keep_airs
+        self.lat,self.long = location
+        self.asc_desc = asc_desc
+        self.init_parameters(date, **kwargs)
+        self.set_location(location)
+        EarthsAtmosphere.__init__(self)
+    
+    def init_parameters(self, date, **kwargs):  
+        from MCEq.geometry.T_downloader import AIRS_Download, AIRS_read_in
+        from matplotlib.dates import strpdate2num, num2date
+        
+
+        airs_filenames = AIRS_Download(self.airs_dir, date, date)
+        
+        self.Pressure, self.Lat_rad_bins, self.Long_rad_bins, Temp_asc ,Height_asc,Temp_desc,Height_desc  = AIRS_read_in(airs_filenames[0]) # hPa, rad,rad,K,m
+        if not self.keep_airs:
+            for file in airs_filenames:
+                os.remove(glob.glob(file)[0] )
+        if self.asc_desc == 'asc':
+            Temp = Temp_asc
+            Height = Height_asc
+        elif self.asc_desc == 'desc':
+            Temp = Temp_desc
+            Height = Height_desc        
+        elif self.asc_desc == 'mean':
+            Temp = np.nanmean(np.stack((Temp_asc[...,np.newaxis],Temp_desc[...,np.newaxis]), axis=3),3)
+            Height = np.nanmean(np.stack((Height_asc,Height_desc), axis=3),3)
+        else:
+            raise Exception("Variable asc_desc should be asc, desc or mean not " +asc_desc )
+        del Temp_asc,Height_asc,Height_desc, Temp_desc
+        self.date_obj = datetime.strptime(date , '%Y%m%d')   
+        #self.T_splines,self.H_splines,self.D_splines = [],[],[]
+        
+        self.msis = MSIS00Atmosphere("SouthPole", 'January')
+        self.msis._msis.set_doy(self._get_y_doy(self.date_obj)[1] - 1)   
+        self.Temp,self.Height = Temp,Height
+        del Height,Temp
+        self.theta_deg = None
+    def splines(self,p_idx, latitude, longitude):
+        from scipy.interpolate import griddata
+        lo,la = np.meshgrid(self.Long_rad_bins,self.Lat_rad_bins)
+        la,lo = la.ravel(),lo.ravel()
+        T = self.Temp[p_idx,:,:].ravel()
+        H = self.Height[p_idx,:,:].ravel()
+        mask_T = np.isfinite(T)
+        mask_H = np.isfinite(H)
+        T,H = T[mask_T],H[mask_H]
+        la_T,lo_T,la_H,lo_H = la[mask_T],lo[mask_T] ,la[mask_H],lo[mask_H] 
+        return griddata((la_T,lo_T),T,(latitude,longitude),method='nearest'),griddata((la_H,lo_H),H,(latitude,longitude),method='nearest')
+    def set_location(self, location):
+        from scipy.interpolate import interp1d
+        self.lat,self.long = location[0]*np.pi/180.,location[1]*np.pi/180.
+        R = 8.314*1e6*1e-2 #cm^3 hPa/K/mol (Ideal gas constant)
+        M = 28.964 #g/mol (molar density of Air)
+        T_H = np.array([self.splines(p_i,self.lat,self.long)  for p_i in range(len(self.Pressure))  ])
+        t_vec = T_H[:,0]
+        h_vec = T_H[:,1]*1e2
+        d_vec = self.Pressure/t_vec*M/R #g/cm^3  
+
+         
+        if len(h_vec)==0 or h_vec[-1] < config.h_atm*1e2:          
+            self.msis._msis.set_location_coord(longitude = self.long*180./np.pi ,latitude = self.lat*180./np.pi)
+            if len(h_vec>0):
+                h_extra = np.linspace(h_vec[-1], config.h_atm * 1e2, 10) 
+            else:                   
+                self.dens =  lambda h: np.log(self.msis.get_density(h))
+                self.temp =  lambda t: self.msis.get_temperature(t)
+                return
+
+            msis_extra_d = np.array([self.msis.get_density(h) for h in h_extra])
+            msis_extra_t = np.array([self.msis.get_temperature(h) for h in h_extra])
+
+            # Merge the two datasets
+            h_vec = np.hstack([h_vec[:-1], h_extra])
+            d_vec = np.hstack([d_vec[:-1], msis_extra_d])
+            t_vec = np.hstack([t_vec[:-1], msis_extra_t])
+        self.dens  = interp1d(h_vec, np.log(d_vec),assume_sorted=True, fill_value = 'extrapolate')
+        self.temp  = interp1d(h_vec, t_vec,assume_sorted=True, fill_value = 'extrapolate')
+        
+    def set_date(self, date):
+        if self.date_obj ==datetime.strptime(date , '%Y%m%d'):
+            return
+        self.init_parameters(date)
+        self.set_location((self.lat,self.long))
+    def _get_y_doy(self, date):
+        return date.timetuple().tm_year, date.timetuple().tm_yday    
+    def get_density(self, h_cm):
+        """ Returns the density of air in g/cm**3.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
+        """
+        
+        ret = np.exp(self.dens(h_cm))
+        
+        try:
+            ret[h_cm > config.h_atm*1e2] = np.nan
+        except TypeError:
+            if h_cm > config.h_atm*1e2:
+                return np.nan
+        return ret  
+    def get_temperature(self, h_cm):
+        """ Returns the temperature in K.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: temperature :math:`T(h_{cm})` in K
+        """
+        ret = self.temp(h_cm)
+        try:
+            ret[h_cm > config.h_atm*1e2] = np.nan
+        except TypeError:
+            if h_cm > config.h_atm*1e2:
+                return np.nan
+        return ret
+class AIRSAtmosphereNorth(EarthsAtmosphere):
+    """Interpolation class for tabulated atmospheres.
+
+    This class is intended to read preprocessed AIRS Satellite data.
+
+    Args:
+      location (int): see :func:`init_parameters`
+      season (str,optional): see :func:`init_parameters`
+    """
+    def __init__(self, location, season, extrapolate=True, *args, **kwargs):
+        if location.isdigit():            
+            location = int(location)
+        else:
+            raise Exception(self.__class__.__name__ +
+                           "(): location should be a latitude between 0 and 180. " +
+                           location)
+        if location > 180 or location <0:
+            raise Exception(self.__class__.__name__ +
+                           "(): location should be a latitude between 0 and 180. " +
+                           str(location))
+
+        self.extrapolate = extrapolate
+
+        self.month2doy = {
+            'January': 1,
+            'February': 32,
+            'March': 60,
+            'April': 91,
+            'May': 121,
+            'June': 152,
+            'July': 182,
+            'August': 213,
+            'September': 244,
+            'October': 274,
+            'November': 305,
+            'December': 335
+        }
+
+        self.season = season
+        self.init_parameters(location, **kwargs)
+        EarthsAtmosphere.__init__(self)
+
+    def init_parameters(self, location, **kwargs):
+        """Loads tables and prepares interpolation.
+
+        Args:
+          location (int): Latitude in degrees (0 to 180) 0=North Pole, 180=South Pole
+          doy (int): Day Of Year
+        """
+        from scipy.interpolate import interp1d
+        from matplotlib.dates import strpdate2num, num2date
+        from os import path
+        
+        #This is a bruteforce path to takaos AIRS data on the IceCube Madison Server. This should be made more general in the future.
+        data_path = "/data/user/takao/analysis/airs/airx3std_v6_lat_daily/"
+
+        if 'table_path' in kwargs:
+            data_path = kwargs['table_path']
+        files = [('temp', 'airs_amsu_temp_%03i_daily.txt'%(location)),
+                 ('alti', 'airs_amsu_alti_%03i_daily.txt'%(location))]
+
+        data_collection = {}
+
+        # limit SouthPole pressure to <= 600
+        min_press_idx = 1
+
+        IC79_idx_1 = None
+        IC79_idx_2 = None
+
+        for d_key, fname in files:
+            fname = data_path  + fname
+            tab = np.loadtxt(fname,
+                             converters={0: strpdate2num('%Y/%m/%d')},
+                             usecols=[0] + list(range(2, 27)))
+            with open(fname, 'r') as f:
+                 comline = f.readline()
+            p_levels = [float(s.strip()) for s in comline.split(' ')[3:] if s != '' ][min_press_idx:]#hPa
+            dates = num2date(tab[:, 0])
+            for di, date in enumerate(dates):
+                if date.month == 6 and date.day == 1:
+                    if date.year == 2010:
+                        IC79_idx_1 = di
+                    elif date.year == 2011:
+                        IC79_idx_2 = di
+            surf_val = tab[:, 1]
+            cols = tab[:, min_press_idx + 2:]
+            data_collection[d_key] = (dates, surf_val, cols)
+
+        self.interp_tab_d = {}
+        self.interp_tab_t = {}
+        self.dates = {}
+        dates = data_collection['alti'][0]
+        msis = MSIS00Atmosphere("SouthPole", 'January')
+        msis._msis.set_location_coord(longitude=0.,latitude=90.-float(location))
+        for didx, date in enumerate(dates):
+            R = 8.314*1e6*1e-2# cm^3 hPa/K/mol (Ideal gas constant)
+            M = 28.964 #g/mol (molar density of Air)
+            h_vec = np.array(data_collection['alti'][2][didx, :] * 1e2)  #cm          
+            t_vec = np.array(data_collection['temp'][2][didx, :]) #K
+            d_vec = p_levels/t_vec*M/R #g/cm^3 (from ideal Gas Law)
+            #if all(np.isfinite(t_vec)&(t_vec>0)==0):
+            #    print t_vec
+            h_vec = h_vec[np.isfinite(t_vec)&(t_vec>0)]
+            d_vec = d_vec[np.isfinite(t_vec)&(t_vec>0)]
+            t_vec = t_vec[np.isfinite(t_vec)&(t_vec>0)]
+            if self.extrapolate:
+                # Extrapolate using msis
+                msis._msis.set_doy(self._get_y_doy(date)[1] - 1)
+                if len(h_vec>0):
+                    h_extra = np.linspace(h_vec[-1], config.h_atm * 1e2, 250) 
+                else:                   
+                    self.interp_tab_d[self._get_y_doy(date)] =  lambda h: np.log(msis.get_density(h))
+                    self.interp_tab_t[self._get_y_doy(date)] =  lambda h: np.log(msis.get_temperature(h))
+                    self.dates[self._get_y_doy(date)] = date
+                    continue
+                
+                msis_extra_d = np.array([msis.get_density(h) for h in h_extra])
+                msis_extra_t = np.array([msis.get_temperature(h) for h in h_extra])
+
+                # Interpolate last few altitude bins
+                #ninterp = 5
+
+                #for ni in range(ninterp):
+                #    cl = (1 - np.exp(-ninterp + ni + 1))
+                #    ch = (1 - np.exp(-ni))
+                #    norm = 1. / (cl + ch)
+                #    d_vec[-ni -
+                #          1] = (d_vec[-ni - 1] * cl * norm +
+                #                msis.get_density(h_vec[-ni - 1]) * ch * norm)
+                #    t_vec[-ni - 1] = (
+                #        t_vec[-ni - 1] * cl * norm +
+                #        msis.get_temperature(h_vec[-ni - 1]) * ch * norm)
+
+                # Merge the two datasets
+                h_vec = np.hstack([h_vec[:-1], h_extra])
+                d_vec = np.hstack([d_vec[:-1], msis_extra_d])
+                t_vec = np.hstack([t_vec[:-1], msis_extra_t])
+            self.interp_tab_d[self._get_y_doy(date)] = interp1d(h_vec, np.log(d_vec),kind='cubic', fill_value = 'extrapolate')
+            self.interp_tab_t[self._get_y_doy(date)] = interp1d(h_vec, np.log(t_vec),kind='cubic', fill_value = 'extrapolate')
+            self.dates[self._get_y_doy(date)] = date
+
+        self.IC79_start = self._get_y_doy(dates[IC79_idx_1])
+        self.IC79_end = self._get_y_doy(dates[IC79_idx_2])
+        self.IC79_days = (dates[IC79_idx_2] - dates[IC79_idx_1]).days
+        self.location = location
+        if self.season is None:
+            self.set_IC79_day(0)
+        else:
+            self.set_season(self.season)
+        # Clear cached value to force spline recalculation
+        self.theta_deg = None
+        
+    def doy2month(self,doy):        
+        oldseason = None
+        for season in self.month2doy:
+            if (oldseason != None ) and doy < self.month2doy[season]:
+                return oldseason
+            elif doy >= 335:
+                return'December'            
+            oldseason = season
+    def set_location(self, location):
+        if location.isdigit():            
+            location = int(location)
+        else:
+            raise Exception(self.__class__.__name__ +
+                           "(): location should be a latitude between 0 and 180. " +
+                           location)
+        if location > 180 or location <0:
+            raise Exception(self.__class__.__name__ +
+                           "(): location should be a latitude between 0 and 180. " +
+                           str(location))
+        self.init_parameters(location)
+        #self.calculate_density_spline()
+    def set_date(self, year, doy):
+        self.dens = self.interp_tab_d[(year, doy)]
+        self.temp = self.interp_tab_t[(year, doy)]
+        self.date = self.dates[(year, doy)]
+        # Compatibility with caching
+        self.season = self.doy2month(doy)
+        self.calculate_density_spline()
+
+    def _set_doy(self, doy, year=2010):
+        self.dens = self.interp_tab_d[(year, doy)]
+        self.temp = self.interp_tab_t[(year, doy)]
+        self.date = self.dates[(year, doy)]
+    def set_season(self, month):
+        self.season = month
+        self._set_doy(self.month2doy[month])
+        self.season = month
+
+    def set_IC79_day(self, IC79_day):
+        import datetime
+        if IC79_day > self.IC79_days:
+            raise Exception(self.__class__.__name__ +
+                            "::set_IC79_day(): IC79_day above range.")
+        target_day = self._get_y_doy(self.dates[self.IC79_start] +
+                                     datetime.timedelta(days=IC79_day))
+        info(2, 'setting IC79_day', IC79_day)
+        self.dens = self.interp_tab_d[target_day]
+        self.temp = self.interp_tab_t[target_day]
+        self.date = self.dates[target_day]
+        # Compatibility with caching
+        self.season = self.date
+
+    def _get_y_doy(self, date):
+        return date.timetuple().tm_year, date.timetuple().tm_yday
+
+    def get_density(self, h_cm):
+        """ Returns the density of air in g/cm**3.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: density :math:`\\rho(h_{cm})` in g/cm**3
+        """
+        ret = np.exp(self.dens(h_cm))#np.exp(np.interp(h_cm, self.h, np.log(self.dens)))
+        try:
+            ret[h_cm > config.h_atm*1e2] = np.nan
+        except TypeError:
+            if h_cm > config.h_atm*1e2:
+                return np.nan
+        return ret
+
+    def get_temperature(self, h_cm):
+        """ Returns the temperature in K.
+
+        Interpolates table at requested value for previously set
+        year and day of year (doy).
+
+        Args:
+          h_cm (float): height in cm
+
+        Returns:
+          float: temperature :math:`T(h_{cm})` in K
+        """
+        ret = np.exp(self.temp(h_cm))#np.exp(interp1d( self.h, np.log(self.temp))(h_cm))
+        try:
+            ret[h_cm > config.h_atm*1e2] = np.nan
+        except TypeError:
+            if h_cm > config.h_atm*1e2:
+                return np.nan
+        return ret
+
+    
+    
 class AIRSAtmosphere(EarthsAtmosphere):
     """Interpolation class for tabulated atmospheres.
 
@@ -726,6 +1140,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
           location (str): supported is only "SouthPole"
           doy (int): Day Of Year
         """
+        from scipy.interpolate import interp1d
         from matplotlib.dates import strpdate2num, num2date
         from os import path
 

@@ -375,7 +375,7 @@ class MCEqRun(object):
         self._restore_initial_condition = [
             (self.set_primary_model, mclass, tag)]
         # Initialize primary model object
-        self.pmodel = mclass(tag)
+        self.pmodel = mclass(**tag)
         self.get_nucleon_spectrum = np.vectorize(self.pmodel.p_and_n_flux)
 
         try:
@@ -564,7 +564,7 @@ class MCEqRun(object):
         base_model, model_config = density_config
 
         available_models = [
-            'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
+            'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS','AIRSNorth','AIRSLatLong', 'Isothermal',
             'GeneralizedTarget'
         ]
 
@@ -583,6 +583,10 @@ class MCEqRun(object):
             self.density_model = dprof.CorsikaAtmosphere(*model_config)
         elif base_model == 'AIRS':
             self.density_model = dprof.AIRSAtmosphere(*model_config)
+        elif base_model == 'AIRSNorth':
+            self.density_model = dprof.AIRSAtmosphereNorth(*model_config)
+        elif base_model == 'AIRSLatLong':
+            self.density_model = dprof.AIRSAtmosphereLatLong(*model_config)
         elif base_model == 'Isothermal':
             self.density_model = dprof.IsothermalAtmosphere(*model_config)
         elif base_model == 'GeneralizedTarget':
@@ -774,14 +778,25 @@ class MCEqRun(object):
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
-        if (max_ldec * ri(config.max_density) > max_lint
+        if True or (max_ldec / self.density_model.max_den > max_lint
                 and config.leading_process == 'decays'):
             info(3, "using decays as leading eigenvalues")
-            def delta_X(X): return config.stability_margin / (max_ldec * ri(X))
-        else:
+            def delta_X(X): 
+                return config.stability_margin / (max_ldec * ri(X))
+        elif config.leading_process == 'interactions':
             info(2, "using interactions as leading eigenvalues")
-            def delta_X(X): return config.stability_margin / max_lint
-
+            def delta_X(X): 
+                return config.stability_margin / max_lint
+        else:    
+            def delta_X(X):
+                dX = min(
+                    config.stability_margin / (max_ldec * ri(X)),
+                    config.stability_margin / max_lint)
+                # if dX/self.density_model.max_X < 1e-7:
+                #     raise Exception(
+                # 'Stiffness warning: dX <= 1e-7. Check configuration or' +
+                # 'manually call MCEqRun._calculate_integration_path(int_grid, "X", force=True).')
+                return dX
         dXmax = config.dXmax
         while X < max_X:
             dX = min(delta_X(X), dXmax)
