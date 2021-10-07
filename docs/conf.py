@@ -31,7 +31,8 @@ import MCEq.version
 extensions = [
     'sphinx.ext.autodoc', 'sphinx.ext.napoleon', 'sphinx.ext.todo',
     'sphinx.ext.coverage', 'sphinx.ext.imgmath', 'sphinx.ext.viewcode',
-    'sphinx.ext.intersphinx', 'matplotlib.sphinxext.plot_directive',
+    'sphinx.ext.intersphinx',
+    'matplotlib.sphinxext.plot_directive',
     'sphinx.ext.autosummary'
 ]
 
@@ -39,8 +40,8 @@ intersphinx_mapping = {
     'python': ('http://docs.python.org/2.7', None),
     'numpy': ('http://docs.scipy.org/doc/numpy/', None),
     'scipy': ('http://docs.scipy.org/doc/scipy/reference/', None),
-    'CRFluxModels': ('http://crfluxmodels.readthedocs.org/en/latest', None),
-    'ParticleDataTool': ('http://particledatatool.readthedocs.org/en/latest',
+    'crflux': ('http://crfluxmodels.readthedocs.org/en/latest', None),
+    'particletools': ('http://particledatatool.readthedocs.org/en/latest',
                          None)
 }
 
@@ -111,9 +112,31 @@ pygments_style = 'sphinx'
 
 # -- Options for HTML output ----------------------------------------------
 
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
+
+if not on_rtd:  # only import and set the theme if we're building docs locally
+    import sphinx_rtd_theme
+    html_theme = 'sphinx_rtd_theme'
+    html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
+
+    html_context = {
+        'css_files': [
+            '_static/theme_overrides.css'
+        ]
+    }
+else:
+    html_context = {
+        'css_files': [
+            '//media.readthedocs.org/css/sphinx_rtd_theme.css',            
+            '//media.readthedocs.org/css/readthedocs-doc-embed.css',    
+            '_static/theme_overrides.css'
+        ]
+    }
+
+
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'nature'
+# html_theme = 'nature'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the

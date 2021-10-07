@@ -1,7 +1,53 @@
-Changes in first release version of MCEq from release candidate 1:
+Changes in MCEq since moving from MCEq_classic to the 1.X.X versions:
 
-Current:
+Version 1.2.2:
+- Added wheels for Python 3.9 on 64 bit systems
+- Removed binary wheels for 32bit due to lack of h5py wheels and mainstream has transitioned to 64bit. 32bit users can build MCEq from source.
+
+Version 1.2.0:
+- New data tables: physics will be affected mostly low energies < 30 GeV and minor
+corrections can be visible for particle ratios at higher energies.
+[See dedicated doc page](http://mceq.readthedocs.org/en/latest/v12v11_diff.html).
+- tests have been updated to the new version and will fail if used with the old database file
+- SIBYLL23C release is updated to patch level 04 instead of the previous 01. The results are very similar and changes are smaller than in CORSIKA because MCEq uses the air target and not the Nitrogen/Oxygen mix.
+- QGSJET tables had bugs and there are more pronounced changes
+- Projectile equivalence tables updated (thx to [CORSIKA8 team](https://www.ikp.kit.edu/corsika/88.php))
+- Documentation badge
+- Minor (cosmetic and technical) updates of crflux and particletools packages
+- crflux includes the spline for the GlobalSplineFitBeta class and will be updated during install.  
+- set_density_profile accepts a density object as parameter in parallel to the previous definition
+- some config values that can produce inconsistent results (A_target for ex.) are saved in the objects that can trigger such inconsistencies. Changing config values in runtime should be more safe, but not free of failures. It is still not recommended to change config values in runtime if this can be avoided.
+
+Version 1.1.3:
+
+- Added atmospheres for KM3NeT by @Kakiczi (https://github.com/Kakiczi)
+- new keyword for MCEqRun "build_matrices"=False (to prevent matrix building on init)
+- Equivalent projectile mappings separated for SIBYLL 2.1 and 2.3  
+
+Version 1.1.2:
+
+- Hotfix for MKL library handler
+
+Version 1.1.0:
+
+Minor version bump because of an interface change in some convenience functions, for example
+dNdxlab in particledata. Those now consistently accept kinetic energy arguments. In the
+previous versions some of these functions required laboratory energies others kinetic, that
+may have generated some confusion. Other changes include:
+
 - multiple calls to `set_single_particle` can define an initial state by using an the `append` flag
+- updated to crflux 1.0.3 (Windows compatibility)
+- Flux and result array are re-created when interaction model changes (not resized)
+- Fixed ctypes bug in NRLMSISE
+- Long description fixed in setup.py
+- added license to scikit-hep project's azure-build-helpers by Henryii@github
+- build includes Python 3.8 binaries (except for 32bit Linux)
+- tests moved into MCEq package
+- improved ctypes library finding
+- new convenience function MCEqRun.closest_energy to obtain the closest grid point
+- new convenience functions mceq_config.set_mkl_threads allows setting thread count in run time
+- new CorsikaAtmosphere location "ANTARES/KM3NeT-ORCA"
+- tests for atmospheres
 
 Version 1.0.9:
 - disable_decays flag in advanced options fixed
