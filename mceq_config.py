@@ -1,5 +1,6 @@
 from __future__ import print_function
 import sys
+sys.path.insert(0, "/home/jbottcher/.local/")
 import platform
 import os.path as path
 import warnings
@@ -247,7 +248,7 @@ standard_particles += [22, 111, 130, 310]  #: , 221, 223, 333]
 pf = platform.platform() 
 
 if 'Linux' in pf:
-    mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.so') 
+    mkl_path = path.join('/home/jbottcher/.local', 'lib', 'libmkl_rt.so') 
 elif 'Darwin' in pf:
     mkl_path = path.join(sys.prefix, 'lib', 'libmkl_rt.dylib') 
 else:
@@ -257,7 +258,9 @@ else:
 # Check if MKL library found
 if path.isfile(mkl_path):
     has_mkl = True
+    print("Use MKL")
 else:
+    print
     has_mkl = False
 
 # Look for cupy module

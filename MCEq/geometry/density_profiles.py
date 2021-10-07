@@ -718,88 +718,164 @@ class AIRSAtmosphereLatLong(EarthsAtmosphere):
         keep_airs (bool): Wether to keep downloaded airs data
         asc_desc (str) : Either "asc","desc" or "mean". Defines if ascending or descending or the average value of the Dataset is used for temperature and height.
     """
-    def __init__(self, date, location,airs_dir = '', keep_airs = False,asc_desc='mean' ,*args,**kwargs):
+    def __init__(self, date, location,airs_dir = '',keep_airs=False,dataset = 'AIRS',asc_desc='mean' ,*args,**kwargs):
         
 
         self.airs_dir      = airs_dir
         self.keep_airs     = keep_airs
         self.lat,self.long = location
         self.asc_desc = asc_desc
-        self.init_parameters(date, **kwargs)
+        self.dataset = dataset
+        self.init_parameters(date,dataset=dataset, **kwargs)
         self.set_location(location)
         EarthsAtmosphere.__init__(self)
     
     def init_parameters(self, date, **kwargs):  
         from MCEq.geometry.T_downloader import AIRS_Download, AIRS_read_in
-        from matplotlib.dates import strpdate2num, num2date
+        from MCEq.geometry.ECMWF_Download import Download_ERA5, read_grib_data, read_gribTwo_Data
+        #from matplotlib.dates import strpdate2num, num2date
         
-
-        airs_filenames = AIRS_Download(self.airs_dir, date, date)
+        if self.dataset == 'AIRS':
+            airs_filenames = AIRS_Download(self.airs_dir, date, date)
         
-        self.Pressure, self.Lat_rad_bins, self.Long_rad_bins, Temp_asc ,Height_asc,Temp_desc,Height_desc  = AIRS_read_in(airs_filenames[0]) # hPa, rad,rad,K,m
-        if not self.keep_airs:
-            for file in airs_filenames:
-                os.remove(glob.glob(file)[0] )
-        if self.asc_desc == 'asc':
-            Temp = Temp_asc
-            Height = Height_asc
-        elif self.asc_desc == 'desc':
-            Temp = Temp_desc
-            Height = Height_desc        
-        elif self.asc_desc == 'mean':
-            Temp = np.nanmean(np.stack((Temp_asc[...,np.newaxis],Temp_desc[...,np.newaxis]), axis=3),3)
-            Height = np.nanmean(np.stack((Height_asc,Height_desc), axis=3),3)
+            self.Pressure, self.Lat_rad_bins, self.Long_rad_bins, Temp_asc ,Height_asc,Temp_desc,Height_desc  = AIRS_read_in(airs_filenames[0]) # hPa, rad,rad,K,m
+            if not self.keep_airs:
+                for file in airs_filenames:
+                    os.remove(glob.glob(file)[0] )
+            if self.asc_desc == 'asc':
+                Temp = Temp_asc
+                Height = Height_asc
+            elif self.asc_desc == 'desc':
+                Temp = Temp_desc
+                Height = Height_desc        
+            elif self.asc_desc == 'mean':
+                Temp = np.nanmean(np.stack((Temp_asc[...,np.newaxis],Temp_desc[...,np.newaxis]), axis=3),3)
+                Height = np.nanmean(np.stack((Height_asc,Height_desc), axis=3),3)
+            else:
+                raise Exception("Variable asc_desc should be asc, desc or mean not " +asc_desc )
+            del Temp_asc,Height_asc,Height_desc, Temp_desc
+        elif self.dataset == 'ERA5':
+            Filenames = Download_ERA5(self.airs_dir, date, date,'12:00')
+            Temp,Height,lat_bins,long_bins,self.Pressure = read_grib_data(Filenames[0])
+            self.Lat_rad_bins,self.Long_rad_bins         = lat_bins[:,0]/180*np.pi,long_bins[0,:]/180*np.pi 
+            #print(self.Lat_rad_bins.shape,self.Long_rad_bins.shape)
+            Temp,Height,self.Pressure = Temp[::-1],Height[::-1],self.Pressure[::-1]
+        elif self.dataset == 'ERA5_model':
+            Filenames = Download_ERA5(self.airs_dir, date, date,'12:00',model_lvl=True)
+            if 'single_day' in Filenames[0]:
+                Temp,Height,lat_bins,long_bins,self.Pressure = read_gribTwo_Data(Filenames[0])
+            else:
+                Temp,Height,lat_bins,long_bins,Pressure = read_gribTwo_Data(Filenames[0],datetime.strptime(date,"%Y%m%d"))
+            self.Lat_rad_bins,self.Long_rad_bins         = lat_bins/180*np.pi,long_bins/180*np.pi
+            #print(self.Lat_rad_bins.shape,self.Long_rad_bins.shape)
+            Temp,Height,Pressure = Temp[::-1],Height[::-1],Pressure[::-1]
         else:
-            raise Exception("Variable asc_desc should be asc, desc or mean not " +asc_desc )
-        del Temp_asc,Height_asc,Height_desc, Temp_desc
+            raise Exception("Dataset must be either 'AIRS' or 'ERA5'")          
         self.date_obj = datetime.strptime(date , '%Y%m%d')   
         #self.T_splines,self.H_splines,self.D_splines = [],[],[]
         
         self.msis = MSIS00Atmosphere("SouthPole", 'January')
-        self.msis._msis.set_doy(self._get_y_doy(self.date_obj)[1] - 1)   
-        self.Temp,self.Height = Temp,Height
+        self.msis._msis.set_doy(self._get_y_doy(self.date_obj)[1] - 1) 
+        if self.dataset == 'AIRS':
+            self.Temp,self.Height = Temp,Height
+        elif self.dataset == 'ERA5':
+            from scipy.interpolate import RectBivariateSpline
+            self.Temp,self.Height = [],[]
+            for p_idx,p in enumerate(self.Pressure):
+                T,H = RectBivariateSpline(self.Lat_rad_bins[::-1],self.Long_rad_bins,Temp[p_idx,::-1], kx=1,ky=1 ),RectBivariateSpline(self.Lat_rad_bins[::-1],self.Long_rad_bins,Height[p_idx,::-1], kx=1,ky=1 )
+                self.Temp.append(T)
+                self.Height.append(H)
+        elif self.dataset == 'ERA5_model':
+            from scipy.interpolate import RectBivariateSpline
+            self.Temp,self.Height,self.Pressure = [],[],[]
+            for p_idx,p in enumerate(Pressure):
+                T,H = RectBivariateSpline(self.Lat_rad_bins[::-1],self.Long_rad_bins,Temp[p_idx,::-1], kx=1,ky=1 ),RectBivariateSpline(self.Lat_rad_bins[::-1],self.Long_rad_bins,Height[p_idx,::-1], kx=1,ky=1 )
+                self.Pressure.append(RectBivariateSpline(self.Lat_rad_bins[::-1],self.Long_rad_bins,Pressure[p_idx,::-1], kx=1,ky=1 ))
+                self.Temp.append(T)
+                self.Height.append(H)
         del Height,Temp
         self.theta_deg = None
     def splines(self,p_idx, latitude, longitude):
         from scipy.interpolate import griddata
-        lo,la = np.meshgrid(self.Long_rad_bins,self.Lat_rad_bins)
-        la,lo = la.ravel(),lo.ravel()
-        T = self.Temp[p_idx,:,:].ravel()
-        H = self.Height[p_idx,:,:].ravel()
-        mask_T = np.isfinite(T)
-        mask_H = np.isfinite(H)
-        T,H = T[mask_T],H[mask_H]
-        la_T,lo_T,la_H,lo_H = la[mask_T],lo[mask_T] ,la[mask_H],lo[mask_H] 
-        return griddata((la_T,lo_T),T,(latitude,longitude),method='nearest'),griddata((la_H,lo_H),H,(latitude,longitude),method='nearest')
+        if self.dataset=='AIRS':
+            lo,la = np.meshgrid(self.Long_rad_bins,self.Lat_rad_bins)
+            la,lo = la.ravel(),lo.ravel()
+            T = self.Temp[p_idx,:,:].ravel()
+            H = self.Height[p_idx,:,:].ravel()
+            mask_T = np.isfinite(T)
+            mask_H = np.isfinite(H)
+            T,H = T[mask_T],H[mask_H]
+            la_T,lo_T,la_H,lo_H = la[mask_T],lo[mask_T] ,la[mask_H],lo[mask_H] 
+            if self.theta_deg != None:
+                #print('doing angle correction')
+                theta_deg = 180 - self.theta_deg
+                H_pre = griddata((la_H,lo_H),H,(latitude,longitude),method='nearest')
+                length = config.r_E*(np.cos(theta_deg/180.*np.pi)+np.sqrt((1+H_pre/config.r_E )**2-np.sin(theta_deg*np.pi/180.)**2 ))
+                dlat = np.arccos(((config.r_E+H_pre)**2+config.r_E**2-length**2)/(2*config.r_E*(config.r_E+H_pre) ))
+                #print(dlat,latitude) 
+            else:
+                dlat = 0
+            lat_height = min(90.,(self.lat+dlat))
+            #if self.dataset == 'AIRS':
+            return griddata((la_T,lo_T),T,(lat_height,longitude),method='nearest'),griddata((la_H,lo_H),H,(lat_height,longitude),method='nearest')
+        elif self.dataset == 'ERA5':
+            return self.Temp[p_idx](latitude,longitude%(2*np.pi),grid=False),self.Height[p_idx](latitude,longitude%(2*np.pi),grid=False)
+        elif self.dataset == 'ERA5_model':
+            return self.Temp[p_idx](latitude,longitude%(2*np.pi),grid=False),self.Height[p_idx](latitude,longitude%(2*np.pi),grid=False),self.Pressure[p_idx](latitude,longitude%(2*np.pi),grid=False)
     def set_location(self, location):
         from scipy.interpolate import interp1d
         self.lat,self.long = location[0]*np.pi/180.,location[1]*np.pi/180.
         R = 8.314*1e6*1e-2 #cm^3 hPa/K/mol (Ideal gas constant)
         M = 28.964 #g/mol (molar density of Air)
         T_H = np.array([self.splines(p_i,self.lat,self.long)  for p_i in range(len(self.Pressure))  ])
-        t_vec = T_H[:,0]
-        h_vec = T_H[:,1]*1e2
-        d_vec = self.Pressure/t_vec*M/R #g/cm^3  
-
-         
-        if len(h_vec)==0 or h_vec[-1] < config.h_atm*1e2:          
+        h_vec = T_H[:,1]*1e2 #cm
+        #h_er = np.array([10,20,30,40,50,60,])*1e3*1e2 #cm
+        #sy_e = np.array([1.1,0.6,1.1,1.0,2.1,5.5])
+        #st_e = np.array([2.9,1.5,1.4,1.6,2.1,3.6])
+        #indx = np.digitize(h_vec,h_er)  
+        t_vec = T_H[:,0]#- sy_e[indx-1] + np.random.normal(0,st_e[indx-1]) #K
+        if self.dataset == 'ERA5' or self.dataset =='AIRS':
+            d_vec = self.Pressure/t_vec*M/R #g/cm^3  
+        elif self.dataset == 'ERA5_model':
+            mask  =( t_vec  >  0 )&(h_vec > 0)
+            d_vec = (T_H[:,2]/t_vec*M/R) #g/cm^3 
+            t_vec = t_vec[mask]
+            h_vec = h_vec[mask]
+            d_vec = d_vec[mask]
+        
+        if (len(h_vec)==0 or h_vec[-1] < config.h_atm*1e2) and self.dataset != 'ERA5_model':          
             self.msis._msis.set_location_coord(longitude = self.long*180./np.pi ,latitude = self.lat*180./np.pi)
             if len(h_vec>0):
                 h_extra = np.linspace(h_vec[-1], config.h_atm * 1e2, 10) 
+                #print(h_vec,h_extra)    
             else:                   
                 self.dens =  lambda h: np.log(self.msis.get_density(h))
                 self.temp =  lambda t: self.msis.get_temperature(t)
                 return
-
-            msis_extra_d = np.array([self.msis.get_density(h) for h in h_extra])
-            msis_extra_t = np.array([self.msis.get_temperature(h) for h in h_extra])
+            msis_extra_d,msis_extra_t = np.zeros(len(h_extra)),np.zeros(len(h_extra))
+            for h_i,h in enumerate(h_extra):
+                if self.theta_deg != None :
+                    #print('doing angle correction')
+                    theta_deg = 180 - self.theta_deg
+                    
+                    length = config.r_E*(np.cos(theta_deg/180.*np.pi)+np.sqrt((1+h/1e2/config.r_E )**2-np.sin(theta_deg*np.pi/180.)**2 ))
+                    dlat   = np.arccos(((config.r_E+h/1e2)**2+config.r_E**2-length**2)/(2*config.r_E*(config.r_E+h/1e2) ))
+                    #print(dlat,latitude)
+                else:
+                    dlat = 0
+                #print(self.lat+dlat)
+                lat_height = min(90.,(self.lat+dlat)*180/np.pi)
+                self.msis._msis.set_location_coord(longitude = self.long*180./np.pi ,latitude = lat_height)
+                msis_extra_d[h_i] = self.msis.get_density(h)
+                msis_extra_t[h_i] = self.msis.get_temperature(h)
 
             # Merge the two datasets
+             
             h_vec = np.hstack([h_vec[:-1], h_extra])
             d_vec = np.hstack([d_vec[:-1], msis_extra_d])
             t_vec = np.hstack([t_vec[:-1], msis_extra_t])
-        self.dens  = interp1d(h_vec, np.log(d_vec),assume_sorted=True, fill_value = 'extrapolate')
-        self.temp  = interp1d(h_vec, t_vec,assume_sorted=True, fill_value = 'extrapolate')
+        self.dens  = interp1d(h_vec, np.log(d_vec),assume_sorted=True,bounds_error=False)
+        self.temp  = interp1d(h_vec, t_vec,assume_sorted=True, bounds_error=False)
         
     def set_date(self, date):
         if self.date_obj ==datetime.strptime(date , '%Y%m%d'):

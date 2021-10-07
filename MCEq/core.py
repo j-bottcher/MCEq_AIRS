@@ -685,6 +685,9 @@ class MCEqRun(object):
         self.pman.set_interaction_model(self._int_cs,
                                         self._interactions,
                                         force=True)
+        if not skip_decay_matrix:
+            self.pman.set_decay_channels(self._decays)
+        
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=skip_decay_matrix)
 

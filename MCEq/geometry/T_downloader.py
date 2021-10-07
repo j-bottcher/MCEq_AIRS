@@ -13,7 +13,7 @@ import numpy as np
 def AIRS_Download(workpath,startDate,endDate):    
     remotedir0 = "https://acdisc.gesdisc.eosdis.nasa.gov/data/Aqua_AIRS_Level3/AIRS3STD.006/" # Place of AIRS data
     localdir0 = workpath + startDate[0:4] 
-
+    #https://acdisc.gesdisc.eosdis.nasa.gov/data/Aqua_AIRS_Level3/AIRS3STD.006/2016/AIRS.2016.01.01.L3.RetStd_IR001.v6.0.31.0.G16004140111.hdf
     if not os.path.exists(localdir0):
         os.makedirs(localdir0)
 
@@ -22,13 +22,14 @@ def AIRS_Download(workpath,startDate,endDate):
 
     print('Start date:',stdate)
     print('End date:',endate)
-    print('Downloading satellite data ...') 
+    #print('Downloading satellite data ...') 
     d = stdate
     Localfiles = []
     while d <= endate:
 
         adate = datetime.strftime(d, "%Y%m%d")
-        d += timedelta(days=1)
+        print(adate)
+        #d += timedelta(days=1)
 
         # Remote directory at NASA
         remotedir  = remotedir0 +  adate[0:4] 
@@ -40,13 +41,15 @@ def AIRS_Download(workpath,startDate,endDate):
         
         if glob.glob(localfile) == []:
             os.chdir(localdir)
-
+            print('Downloading satellite data ...')
             acclist = "AIRS."+adate[0:4]+"."+adate[4:6]+"."+adate[6:8]+ ".*.hdf"
             opts = " --load-cookies ~/.netrc --save-cookies ~/.netrc --keep-session-cookies "
             server = remotedir
-            os.system("wget -q -e robots=off -nd -nc -np -r -l1 --no-parent --reject 'index.html*' -A " + acclist + opts + server) # Download
+            os.system("wget -e robots=off -nd -nc -np -r -l1 --no-parent --reject 'index.html*' -A " + acclist + opts + server) # Download
+            print("wget -q -e robots=off -nd -nc -np -r -l1 --no-parent --reject 'index.html*' -A " + acclist + opts + server)
             printfile = glob.glob("AIRS."+adate[0:4]+"."+adate[4:6]+"."+adate[6:8]+ ".*.hdf")
             print(printfile, 'has been created.')
+        d += timedelta(days=1)
     print('Satellite data downloaded.')
     return Localfiles
 
